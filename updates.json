@@ -1,7 +1,12 @@
 {
   "addons": {
     "peekabug@kaply.com": {
-      "updates": []
+      "updates": [
+        {
+          "version": "1.0",
+          "update_link": "https://github.com/mkaply/peekabug/releases/download/v1.0/peekabug-v1.0.xpi"
+        }
+      ]
     }
   }
 }
