@@ -1,0 +1,33 @@
+{
+  "name": "peekabug",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Firefox extension: real titles and activity for secure Bugzilla and Phabricator mail in Gmail",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "lint": "eslint . && web-ext lint --self-hosted",
+    "build": "web-ext build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "jsdom": "^24.0.0",
+    "web-ext": "^8.0.0"
+  },
+  "webExt": {
+    "ignoreFiles": [
+      "test",
+      "README.md",
+      "updates.json",
+      "package.json",
+      "package-lock.json",
+      "eslint.config.mjs"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mkaply/peekabug.git"
+  },
+  "license": "MIT"
+}

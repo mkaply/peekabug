@@ -1,0 +1,102 @@
+name: release
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'manifest.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  build_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: check version change
+        id: check
+        run: |
+          OLD_VERSION=$(git show HEAD~1:manifest.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+          NEW_VERSION=$(jq -r .version manifest.json)
+          if [ "$OLD_VERSION" = "$NEW_VERSION" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: get version and id
+        if: steps.check.outputs.skip != 'true'
+        id: version
+        run: |
+          echo "version=$(jq -r .version manifest.json)" >> $GITHUB_OUTPUT
+          echo "id=$(jq -r .browser_specific_settings.gecko.id manifest.json)" >> $GITHUB_OUTPUT
+
+      - name: set up node
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: install
+        if: steps.check.outputs.skip != 'true'
+        run: npm ci
+
+      - name: test and lint
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          npm test
+          npm run lint
+
+      # Files left out of the package are listed under "webExt" in package.json.
+      - name: sign extension
+        if: steps.check.outputs.skip != 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          npx web-ext sign \
+            --source-dir=. \
+            --artifacts-dir=web-ext-artifacts \
+            --channel=unlisted \
+            --timeout=900000
+          SIGNED_XPI=$(ls web-ext-artifacts/*.xpi | head -1)
+          mv "$SIGNED_XPI" "web-ext-artifacts/peekabug-v${{ steps.version.outputs.version }}.xpi"
+
+      # Create the release before updates.json points at it, so installed
+      # copies are never sent to a download that doesn't exist yet.
+      - name: release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v${{ steps.version.outputs.version }} \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            "web-ext-artifacts/peekabug-v${{ steps.version.outputs.version }}.xpi"
+
+      - name: update updates.json
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          ID=${{ steps.version.outputs.id }}
+          UPDATE_LINK="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/peekabug-v${VERSION}.xpi"
+          jq --arg id "$ID" --arg version "$VERSION" --arg url "$UPDATE_LINK" \
+            '.addons[$id].updates = [{"version": $version, "update_link": $url}]' \
+            updates.json > updates.tmp.json && mv updates.tmp.json updates.json
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add updates.json
+          git commit -m "Update updates.json for v${VERSION}"
+          # main may have moved while signing.
+          git pull --rebase
+          git push

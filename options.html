@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: message-box; padding: 0.5em; }
+    label { display: block; margin-bottom: 0.25em; }
+    input { width: 100%; box-sizing: border-box; }
+    p.note { color: GrayText; font-size: 0.9em; }
+    .buttons { margin-top: 0.75em; }
+  </style>
+</head>
+<body>
+  <label for="apiKey">Bugzilla API key (optional)</label>
+  <input id="apiKey" type="password" autocomplete="off">
+  <p class="note">
+    Leave blank to use your logged-in bugzilla.mozilla.org session.
+    Only needed if lookups fail even though you're logged in.
+  </p>
+  <div class="buttons">
+    <button id="save">Save</button>
+    <button id="clear">Clear cached titles</button>
+    <span id="status"></span>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

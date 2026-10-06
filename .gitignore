@@ -1,0 +1,15 @@
+node_modules/
+web-ext-artifacts/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Environment
+.env
