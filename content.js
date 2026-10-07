@@ -25,6 +25,11 @@ const MAX_SUBJECT_LENGTH = 1000;
 // The text of a secure bugmail body, and its link to the bug.
 const BODY_MARKER = "This email would have contained sensitive information";
 const SHOW_BUG_LINK = 'a[href*="show_bug.cgi?id="]';
+const BUGMAIL_SENDER = "bugzilla-daemon@mozilla.org";
+// Gmail's "Show trimmed content" button. The class is Gmail's; the tooltip
+// and label are fallbacks for English.
+const TRIMMED_TOGGLE =
+  '.ajR, [data-tooltip="Show trimmed content"], [aria-label="Show trimmed content"]';
 
 // Elements that support attachShadow().
 const SHADOW_HOSTS = new Set([
@@ -240,14 +245,28 @@ function parseGmailDate(tooltip) {
   return new Date(date.year, month, date.day, hour, date.minute).getTime();
 }
 
-// The nearest ancestor holding a date tooltip is this message's container.
-function findMessageDate(body) {
-  for (let el = body.parentElement; el; el = el.parentElement) {
-    for (const span of el.querySelectorAll("span[title]")) {
+// Returns { container, time } for the message holding el. The nearest
+// ancestor with a date tooltip is the message's container, which also holds
+// its header (sender, date) and body.
+function findMessage(el) {
+  for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    for (const span of ancestor.querySelectorAll("span[title]")) {
       const time = parseGmailDate(span.title);
       if (time) {
-        return time;
+        return { container: ancestor, time };
       }
+    }
+  }
+  return null;
+}
+
+// The bug number from the open conversation's subject, if it's a secure bug.
+// Gmail's own subject text is still there behind our shadow root.
+function conversationBugId() {
+  for (const heading of document.querySelectorAll("h2")) {
+    const id = heading.textContent.match(HAS_SECURE_BUG)?.[2];
+    if (id) {
+      return id;
     }
   }
   return null;
@@ -288,23 +307,7 @@ browser.runtime.onMessage.addListener(msg => {
   }
 });
 
-// Puts a view.html frame showing the bug's matching activity at the top of
-// the body, and folds the original text into a collapsed <details>.
-function processBody(node) {
-  if (node.parentElement?.closest("[data-bmo-secure]")) {
-    return;
-  }
-  const body = findBody(node);
-  const link = body?.querySelector(SHOW_BUG_LINK);
-  const id = link?.href.match(/show_bug\.cgi\?id=(\d+)/)?.[1];
-  if (!id) {
-    return;
-  }
-  const emailTime = findMessageDate(body);
-  if (!emailTime) {
-    return;
-  }
-
+function createViewFrame(id, emailTime, body) {
   const token = crypto.randomUUID();
   const params = new URLSearchParams({
     token,
@@ -316,16 +319,78 @@ function processBody(node) {
   frame.src = browser.runtime.getURL(`view.html?${params}`);
   frame.style.cssText =
     "border: 0; width: 100%; height: 0; display: block; margin-bottom: 1em;";
+  viewFrames.set(token, frame);
+  return frame;
+}
 
+// Secure bugmail whose text is showing: puts a view.html frame showing the
+// bug's matching activity at the top of the body, and folds the original text
+// into a collapsed <details>.
+function processBody(node) {
+  if (node.parentElement?.closest("[data-bmo-secure]")) {
+    return;
+  }
+  const body = findBody(node);
+  const link = body?.querySelector(SHOW_BUG_LINK);
+  const id = link?.href.match(/show_bug\.cgi\?id=(\d+)/)?.[1];
+  const message = body && findMessage(body);
+  if (!id || !message || message.container.closest("[data-bmo-secure]")) {
+    return;
+  }
+
+  const frame = createViewFrame(id, message.time, body);
   const original = document.createElement("details");
   const summary = document.createElement("summary");
   summary.textContent = "Original message";
   summary.style.cssText = "cursor: pointer; opacity: 0.7;";
   original.append(summary, ...body.childNodes);
 
-  body.dataset.bmoSecure = "done";
+  // Mark the whole message, so text Gmail adds later doesn't get a second frame.
+  message.container.dataset.bmoSecure = "done";
   body.append(frame, original);
-  viewFrames.set(token, frame);
+}
+
+// Gmail trims text that repeats an earlier message in the conversation,
+// showing only a "•••" (show trimmed content) button and not adding the text
+// until it's clicked. Every secure bugmail body is identical, so all but the
+// first in a conversation are trimmed. Recognize those by their sender and
+// the conversation's subject instead, and put the frame above the button.
+function processTrimmedBody(toggle) {
+  const body = toggle.closest(".a3s") ?? toggle.parentElement;
+  if (!body || body.textContent.trim()) {
+    return;
+  }
+  const message = findMessage(body);
+  if (!message || message.container.closest("[data-bmo-secure]")) {
+    return;
+  }
+  const sender = message.container.querySelector("span[email]");
+  if (sender?.getAttribute("email") !== BUGMAIL_SENDER) {
+    return;
+  }
+  const id = conversationBugId();
+  if (!id) {
+    return;
+  }
+
+  message.container.dataset.bmoSecure = "done";
+  const region = bodyRegion(toggle, message.container);
+  region.prepend(createViewFrame(id, message.time, region));
+}
+
+// The outermost element around el that's part of the message body rather
+// than its header. The button's own wrapper is only as wide as the button,
+// so a frame put there would be squeezed to that width.
+function bodyRegion(el, container) {
+  let region = el.parentElement;
+  while (
+    region.parentElement &&
+    region.parentElement !== container &&
+    !region.parentElement.querySelector("span[email], span[title]")
+  ) {
+    region = region.parentElement;
+  }
+  return region;
 }
 
 // Watching Gmail's DOM
@@ -357,6 +422,11 @@ function scan(root) {
   if (root.nodeType !== Node.ELEMENT_NODE) {
     return;
   }
+  if (root.matches(TRIMMED_TOGGLE)) {
+    processTrimmedBody(root);
+  }
+  root.querySelectorAll(TRIMMED_TOGGLE).forEach(processTrimmedBody);
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n =>
       SUBJECT_PIECE.test(n.nodeValue) || n.nodeValue.includes(BODY_MARKER)

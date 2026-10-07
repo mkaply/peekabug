@@ -151,15 +151,19 @@ be framed there.
   requests are read-only, but a sender can cause them.
 - **It depends on Gmail's markup.** It finds subjects by their text, message
   bodies by Gmail's `.a3s` class (with a fallback), and the email's time by
-  Gmail's date tooltip (US and day-first English formats only). If Gmail
-  changes, the extension may stop working, but it won't move data elsewhere.
+  Gmail's date tooltip (US and day-first English formats only). Gmail trims
+  repeated text, so every secure bugmail after the first in a conversation
+  shows only a "Show trimmed content" button (`.ajR`). Those are recognized by
+  the sender's address (`bugzilla-daemon@mozilla.org`) and the conversation's
+  subject. If Gmail changes, the extension may stop working, but it won't move
+  data elsewhere.
 - **Body matching is a heuristic.** It shows changes made in the 3 minutes
   before the email arrived (Gmail gives only the minute), or the closest
   earlier change within an hour, labelled as such.
 
 ### Tests
 
-`npm test` runs 38 offline tests (`test/`) using jsdom with mocked `browser`
+`npm test` runs 45 offline tests (`test/`) using jsdom with mocked `browser`
 and `fetch`, including checks that:
 
 - Gmail's DOM never contains a real title, and `shadowRoot` is `null` to it.

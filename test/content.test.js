@@ -210,6 +210,98 @@ test("frames are sized from heights relayed by the background script", async () 
   assert.equal(frame.style.height, "121px");
 });
 
+// A conversation where Gmail has trimmed a repeated secure bugmail body down
+// to its "Show trimmed content" button.
+function trimmedConversation({ sender = "bugzilla-daemon@mozilla.org", subject = "[Bug 123] (Secure bug 123 in Core :: DOM)" } = {}) {
+  return `
+    <h2 id="subject">${subject}</h2>
+    <div class="message" id="message">
+      <span email="${sender}" name="bugzilla-daemon">${sender}</span>
+      <span title="Mon, Oct 5, 2026, 9:30 AM">9:30 AM</span>
+      <div class="a3s" id="body">
+        <div class="ajR" role="button" aria-label="Show trimmed content"><img alt=""></div>
+      </div>
+    </div>`;
+}
+
+test("trimmed secure bugmail gets a frame without clicking", async () => {
+  const { document } = await setup(trimmedConversation());
+  const frame = document.querySelector("#body > iframe");
+  assert.ok(frame);
+  const url = new URL(frame.src);
+  assert.equal(url.searchParams.get("id"), "123");
+  assert.equal(
+    Number(url.searchParams.get("time")),
+    new Date(2026, 9, 5, 9, 30).getTime()
+  );
+  // The frame goes above Gmail's button, which stays so the text can be shown.
+  assert.equal(document.querySelector("#body").firstElementChild, frame);
+  assert.ok(document.querySelector("#body > .ajR"));
+});
+
+test("trimmed bugmail frames go in the body, not the button's narrow wrapper", async () => {
+  const { document } = await setup(`
+    <h2>[Bug 123] (Secure bug 123 in Core :: DOM)</h2>
+    <div class="message" id="message">
+      <div class="header">
+        <span email="bugzilla-daemon@mozilla.org">bugzilla-daemon</span>
+        <span title="Mon, Oct 5, 2026, 9:30 AM">9:30 AM</span>
+      </div>
+      <div class="ii" id="region">
+        <div class="a3s"><div class="adm" id="wrapper">
+          <div class="ajR" role="button"><img alt=""></div>
+        </div></div>
+      </div>
+    </div>`);
+  const frame = document.querySelector("iframe");
+  assert.equal(frame.parentElement.id, "region");
+  assert.equal(document.getElementById("region").firstElementChild, frame);
+  assert.equal(document.querySelectorAll("#wrapper iframe").length, 0);
+});
+
+test("trimmed bugmail that arrives later gets a frame", async () => {
+  const { document } = await setup("");
+  const conversation = document.createElement("div");
+  conversation.innerHTML = trimmedConversation();
+  document.body.append(conversation);
+  await settle();
+  assert.ok(document.querySelector("#body > iframe"));
+});
+
+test("showing trimmed text afterwards doesn't add a second frame", async () => {
+  const { document } = await setup(trimmedConversation());
+  const revealed = document.createElement("div");
+  revealed.innerHTML = `This email would have contained sensitive information.
+    <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=123">link</a>`;
+  document.getElementById("body").append(revealed);
+  await settle();
+  assert.equal(document.querySelectorAll("#message iframe").length, 1);
+});
+
+test("trimmed mail from other senders is left alone", async () => {
+  const { document } = await setup(
+    trimmedConversation({ sender: "someone@example.com" })
+  );
+  assert.equal(document.querySelector("iframe"), null);
+});
+
+test("trimmed bugmail in a conversation that isn't secure is left alone", async () => {
+  const { document } = await setup(
+    trimmedConversation({ subject: "[Bug 123] An ordinary public bug" })
+  );
+  assert.equal(document.querySelector("iframe"), null);
+});
+
+test("partly trimmed mail with visible text is left alone", async () => {
+  const { document } = await setup(
+    trimmedConversation().replace(
+      '<div class="ajR"',
+      'Some visible text<div class="ajR"'
+    )
+  );
+  assert.equal(document.querySelector("iframe"), null);
+});
+
 test("Gmail date tooltips parse in US and day-first formats", async () => {
   const { window } = await setup("");
   const parse = window.eval("parseGmailDate");

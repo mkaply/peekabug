@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Peekabug",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Shows the real titles and activity of secure Bugzilla bugs and Phabricator revisions in Gmail, kept out of Gmail's page.",
   "browser_specific_settings": {
     "gecko": {
