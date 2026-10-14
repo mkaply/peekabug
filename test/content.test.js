@@ -302,6 +302,75 @@ test("partly trimmed mail with visible text is left alone", async () => {
   assert.equal(document.querySelector("iframe"), null);
 });
 
+// A conversation holding one encrypted bugmail, as sent to people with a key
+// in Bugzilla's Secure Mail preferences. body is the message body's content;
+// attachment is an attachment name Gmail shows below it, if any.
+function encryptedConversation({
+  body = "",
+  attachment = "encrypted.asc",
+  sender = "bugzilla-daemon@mozilla.org",
+  subject = "[Bug 123] (Secure bug 123 in Core :: DOM)",
+} = {}) {
+  return `
+    <h2>${subject}</h2>
+    <div class="message" id="message">
+      <div class="header">
+        <span email="${sender}">${sender}</span>
+        <span title="Mon, Oct 5, 2026, 9:30 AM">9:30 AM</span>
+      </div>
+      <div class="a3s" id="body">${body}</div>
+      ${attachment ? `<div class="attachments"><span>${attachment}</span></div>` : ""}
+    </div>`;
+}
+
+test("PGP/MIME bugmail gets a frame at the top of its body", async () => {
+  const { document } = await setup(encryptedConversation());
+  const frame = document.querySelector("iframe");
+  assert.ok(frame);
+  assert.equal(frame.parentElement.id, "body");
+  assert.equal(new URL(frame.src).searchParams.get("id"), "123");
+});
+
+test("S/MIME bugmail gets a frame", async () => {
+  const { document } = await setup(
+    encryptedConversation({ attachment: "smime.p7m" })
+  );
+  assert.ok(document.querySelector("#body > iframe"));
+});
+
+test("inline PGP bugmail gets a frame, with the ciphertext folded away", async () => {
+  const { document } = await setup(
+    encryptedConversation({
+      attachment: "",
+      body: "-----BEGIN PGP MESSAGE-----<br>hQIMA0x...<br>-----END PGP MESSAGE-----",
+    })
+  );
+  const body = document.getElementById("body");
+  assert.equal(body.firstElementChild.localName, "iframe");
+  assert.match(body.querySelector("details").textContent, /BEGIN PGP MESSAGE/);
+});
+
+test("encrypted bugmail gets only one frame", async () => {
+  const { document } = await setup(
+    encryptedConversation({ body: "-----BEGIN PGP MESSAGE-----" })
+  );
+  assert.equal(document.querySelectorAll("iframe").length, 1);
+});
+
+test("encrypted mail from other senders is left alone", async () => {
+  const { document } = await setup(
+    encryptedConversation({ sender: "someone@example.com" })
+  );
+  assert.equal(document.querySelector("iframe"), null);
+});
+
+test("encrypted bugmail in a conversation that isn't secure is left alone", async () => {
+  const { document } = await setup(
+    encryptedConversation({ subject: "[Bug 123] An ordinary public bug" })
+  );
+  assert.equal(document.querySelector("iframe"), null);
+});
+
 test("Gmail date tooltips parse in US and day-first formats", async () => {
   const { window } = await setup("");
   const parse = window.eval("parseGmailDate");

@@ -61,6 +61,21 @@ Bump `version` in `manifest.json` and push to `main`.
 It can also be run by hand from the Actions tab. `.github/workflows/ci.yml`
 runs the tests and lint on every push and pull request.
 
+### Test builds
+
+To give someone a signed build without auto-updating everyone, run the
+release workflow by hand with **test build** checked, from any branch:
+
+```sh
+gh workflow run release.yml --ref <branch> -f test_build=true
+```
+
+It signs the extension and attaches it to a GitHub pre-release, but doesn't
+touch `updates.json`. AMO signs each version only once, so give test builds
+their own version (e.g. `1.1.1` before releasing `1.2`). Installed copies
+then update from the test build to the next real release as usual. Builds
+without **test build** checked can only be run from `main`.
+
 ## Security model
 
 The goal is that secure bug data is never visible to Google: neither sent to
@@ -157,13 +172,21 @@ be framed there.
   the sender's address (`bugzilla-daemon@mozilla.org`) and the conversation's
   subject. If Gmail changes, the extension may stop working, but it won't move
   data elsewhere.
+- **Encrypted bugmail.** People with a PGP key or S/MIME certificate in
+  Bugzilla's Secure Mail preferences (often without remembering it) get
+  encrypted bugmail. Gmail can't decrypt it, but the subject is still the
+  secure placeholder. These are recognized the same way as trimmed mail, by an
+  `encrypted.asc` or `smime.p7m` attachment or an inline
+  `-----BEGIN PGP MESSAGE-----` body. Removing the key at
+  `https://bugzilla.mozilla.org/userprefs.cgi?tab=securemail` brings back the
+  usual notice.
 - **Body matching is a heuristic.** It shows changes made in the 3 minutes
   before the email arrived (Gmail gives only the minute), or the closest
   earlier change within an hour, labelled as such.
 
 ### Tests
 
-`npm test` runs 45 offline tests (`test/`) using jsdom with mocked `browser`
+`npm test` runs 51 offline tests (`test/`) using jsdom with mocked `browser`
 and `fetch`, including checks that:
 
 - Gmail's DOM never contains a real title, and `shadowRoot` is `null` to it.

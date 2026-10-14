@@ -6,6 +6,11 @@ on:
     paths:
       - 'manifest.json'
   workflow_dispatch:
+    inputs:
+      test_build:
+        description: "Test build: sign and attach to a GitHub pre-release, but don't update updates.json, so nobody auto-updates to it"
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,7 +21,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TEST_BUILD: ${{ github.event.inputs.test_build == 'true' }}
     steps:
+      # Only main can update updates.json; other branches can only make test
+      # builds.
+      - name: check branch
+        if: github.ref != 'refs/heads/main' && github.event.inputs.test_build != 'true'
+        run: |
+          echo "::error::Releases must be built from main. Use a test build for other branches."
+          exit 1
+
       - name: checkout
         uses: actions/checkout@v4
         with:
@@ -73,19 +88,24 @@ jobs:
           mv "$SIGNED_XPI" "web-ext-artifacts/peekabug-v${{ steps.version.outputs.version }}.xpi"
 
       # Create the release before updates.json points at it, so installed
-      # copies are never sent to a download that doesn't exist yet.
+      # copies are never sent to a download that doesn't exist yet. Test
+      # builds are pre-releases of the commit they were built from.
       - name: release
         if: steps.check.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh release create v${{ steps.version.outputs.version }} \
-            --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes \
-            "web-ext-artifacts/peekabug-v${{ steps.version.outputs.version }}.xpi"
+          VERSION=${{ steps.version.outputs.version }}
+          if [ "$TEST_BUILD" = "true" ]; then
+            EXTRA=(--prerelease --target "${{ github.sha }}" --title "v${VERSION} (test build)")
+          else
+            EXTRA=(--title "v${VERSION}")
+          fi
+          gh release create "v${VERSION}" "${EXTRA[@]}" --generate-notes \
+            "web-ext-artifacts/peekabug-v${VERSION}.xpi"
 
       - name: update updates.json
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.skip != 'true' && env.TEST_BUILD != 'true'
         run: |
           VERSION=${{ steps.version.outputs.version }}
           ID=${{ steps.version.outputs.id }}

@@ -30,6 +30,10 @@ const BUGMAIL_SENDER = "bugzilla-daemon@mozilla.org";
 // and label are fallbacks for English.
 const TRIMMED_TOGGLE =
   '.ajR, [data-tooltip="Show trimmed content"], [aria-label="Show trimmed content"]';
+// Signs of encrypted bugmail: PGP/MIME and S/MIME attachment names, and
+// inline PGP's armor.
+const PGP_ARMOR = "-----BEGIN PGP MESSAGE-----";
+const ENCRYPTED_MARKER = /-----BEGIN PGP MESSAGE-----|\bencrypted\.asc\b|\bsmime\.p7m\b/;
 
 // Elements that support attachShadow().
 const SHADOW_HOSTS = new Set([
@@ -338,43 +342,80 @@ function processBody(node) {
     return;
   }
 
-  const frame = createViewFrame(id, message.time, body);
+  // Mark the whole message, so text Gmail adds later doesn't get a second frame.
+  message.container.dataset.bmoSecure = "done";
+  showWithFoldedOriginal(body, createViewFrame(id, message.time, body));
+}
+
+// Puts frame at the top of body and folds body's original content into a
+// collapsed <details>.
+function showWithFoldedOriginal(body, frame) {
   const original = document.createElement("details");
   const summary = document.createElement("summary");
   summary.textContent = "Original message";
   summary.style.cssText = "cursor: pointer; opacity: 0.7;";
   original.append(summary, ...body.childNodes);
-
-  // Mark the whole message, so text Gmail adds later doesn't get a second frame.
-  message.container.dataset.bmoSecure = "done";
   body.append(frame, original);
+}
+
+// For bugmail without readable text, which has no link to the bug: returns
+// { message, id } if el is in a message from Bugzilla, in a conversation
+// whose subject is a secure bug's, that we haven't handled yet.
+function findSecureBugmail(el) {
+  const message = findMessage(el);
+  if (!message || message.container.closest("[data-bmo-secure]")) {
+    return null;
+  }
+  const sender = message.container.querySelector("span[email]");
+  if (sender?.getAttribute("email") !== BUGMAIL_SENDER) {
+    return null;
+  }
+  const id = conversationBugId();
+  return id ? { message, id } : null;
 }
 
 // Gmail trims text that repeats an earlier message in the conversation,
 // showing only a "•••" (show trimmed content) button and not adding the text
 // until it's clicked. Every secure bugmail body is identical, so all but the
-// first in a conversation are trimmed. Recognize those by their sender and
-// the conversation's subject instead, and put the frame above the button.
+// first in a conversation are trimmed. Put the frame above the button.
 function processTrimmedBody(toggle) {
   const body = toggle.closest(".a3s") ?? toggle.parentElement;
   if (!body || body.textContent.trim()) {
     return;
   }
-  const message = findMessage(body);
-  if (!message || message.container.closest("[data-bmo-secure]")) {
+  const found = findSecureBugmail(body);
+  if (!found) {
     return;
   }
-  const sender = message.container.querySelector("span[email]");
-  if (sender?.getAttribute("email") !== BUGMAIL_SENDER) {
-    return;
-  }
-  const id = conversationBugId();
-  if (!id) {
-    return;
-  }
-
+  const { message, id } = found;
   message.container.dataset.bmoSecure = "done";
   const region = bodyRegion(toggle, message.container);
+  region.prepend(createViewFrame(id, message.time, region));
+}
+
+// People with a PGP key or S/MIME certificate in Bugzilla's Secure Mail
+// preferences (often without remembering it) get encrypted bugmail, which
+// Gmail can't decrypt. The subject is still the secure placeholder. node is
+// the text that gave it away: an "encrypted.asc" (PGP/MIME) or "smime.p7m"
+// (S/MIME) attachment name, or an inline "-----BEGIN PGP MESSAGE-----" body.
+function processEncrypted(node) {
+  const found = findSecureBugmail(node.parentElement);
+  if (!found) {
+    return;
+  }
+  const { message, id } = found;
+  message.container.dataset.bmoSecure = "done";
+
+  const body = message.container.querySelector(".a3s");
+  if (body?.textContent.includes(PGP_ARMOR)) {
+    // Inline PGP: fold away the ciphertext, which is no use in Gmail.
+    showWithFoldedOriginal(body, createViewFrame(id, message.time, body));
+    return;
+  }
+  // PGP/MIME or S/MIME: Gmail shows the attachment, and the body is empty or
+  // nearly so. Put the frame at the top of the body, or failing that above
+  // the attachment.
+  const region = body ?? bodyRegion(node.parentElement, message.container);
   region.prepend(createViewFrame(id, message.time, region));
 }
 
@@ -399,6 +440,9 @@ function processTextNode(node) {
   const text = node.nodeValue ?? "";
   if (text.includes(BODY_MARKER) && !isEditable(node)) {
     processBody(node);
+  }
+  if (ENCRYPTED_MARKER.test(text) && !isEditable(node)) {
+    processEncrypted(node);
   }
   const host = existingHost(node);
   if (host) {
@@ -429,7 +473,9 @@ function scan(root) {
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: n =>
-      SUBJECT_PIECE.test(n.nodeValue) || n.nodeValue.includes(BODY_MARKER)
+      SUBJECT_PIECE.test(n.nodeValue) ||
+      n.nodeValue.includes(BODY_MARKER) ||
+      ENCRYPTED_MARKER.test(n.nodeValue)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_SKIP,
   });
